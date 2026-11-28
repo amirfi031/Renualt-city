@@ -90,6 +90,7 @@ fun RenaultCityApp(activity: ComponentActivity) {
     var page by remember { mutableStateOf("home") }
     var category by remember { mutableStateOf("همه قطعات") }
     var selectedPart by remember { mutableStateOf<Part?>(null) }
+    var editingPart by remember { mutableStateOf<Part?>(null) }
     var search by remember { mutableStateOf("") }
     var phone by remember { mutableStateOf("") }
     var userParts by remember { mutableStateOf(loadSavedParts(activity)) }
@@ -111,20 +112,51 @@ fun RenaultCityApp(activity: ComponentActivity) {
                             onParts = { category = "همه قطعات"; page = "parts" },
                             onAds = { page = "ads" }, onAccount = { page = "account" }, onContact = { page = "contact" }
                         )
-                        "parts" -> PartsPage(category, search, allParts, { search = it }, { category = it }, {
-                            selectedPart = it; page = "detail"
-                        }, { page = "home" }, { page = "addPart" })
-                        "addPart" -> AddPartPage(
-                            onBack = { page = "parts" },
-                            onSave = { newPart ->
-                                userParts = userParts + newPart
+                        "parts" -> PartsPage(
+                            category, search, allParts,
+                            { search = it }, { category = it },
+                            { selectedPart = it; page = "detail" },
+                            { page = "home" },
+                            { editingPart = null; page = "addPart" },
+                            { part ->
+                                if (userParts.any { it.code == part.code }) {
+                                    editingPart = part
+                                    page = "addPart"
+                                }
+                            },
+                            { part ->
+                                userParts = userParts.filterNot { it.code == part.code }
                                 saveParts(activity, userParts)
+                            }
+                        )
+                        "addPart" -> AddPartPage(
+                            initialPart = editingPart,
+                            onBack = { editingPart = null; page = "parts" },
+                            onSave = { savedPart ->
+                                userParts = if (editingPart == null) userParts + savedPart
+                                else userParts.map { if (it.code == editingPart!!.code) savedPart else it }
+                                saveParts(activity, userParts)
+                                editingPart = null
                                 category = "همه قطعات"
                                 search = ""
                                 page = "parts"
                             }
                         )
-                        "detail" -> selectedPart?.let { PartDetailPage(it, { page = "parts" }, { page = "contact" }) }
+                        "detail" -> selectedPart?.let { part ->
+                            PartDetailPage(
+                                part,
+                                canEdit = userParts.any { it.code == part.code },
+                                onBack = { page = "parts" },
+                                onQuote = { page = "contact" },
+                                onEdit = { editingPart = part; page = "addPart" },
+                                onDelete = {
+                                    userParts = userParts.filterNot { it.code == part.code }
+                                    saveParts(activity, userParts)
+                                    selectedPart = null
+                                    page = "parts"
+                                }
+                            )
+                        }
                         "ads" -> AdsPage({ page = "home" }, { page = "contact" })
                         "account" -> AccountPage(phone, { phone = it }, { page = "home" })
                         "contact" -> ContactPage { page = "home" }
@@ -180,11 +212,17 @@ fun HomePage(onCategory: (String) -> Unit, onParts: () -> Unit, onAds: () -> Uni
 fun PartsPage(
     category: String, search: String, allParts: List<Part>,
     onSearch: (String) -> Unit, onCategory: (String) -> Unit,
-    onPart: (Part) -> Unit, onBack: () -> Unit, onAdd: () -> Unit
+    onPart: (Part) -> Unit, onBack: () -> Unit, onAdd: () -> Unit,
+    onEdit: (Part) -> Unit, onDelete: (Part) -> Unit
 ) {
-    val filtered = allParts.filter {
-        (category == "همه قطعات" || it.category == category) &&
-        (search.isBlank() || it.name.contains(search, true) || it.code.contains(search, true) || it.category.contains(search, true))
+    var truckFilter by remember { mutableStateOf("همه مدل‌ها") }
+    val filtered = allParts.filter { part ->
+        (category == "همه قطعات" || part.category == category) &&
+        (truckFilter == "همه مدل‌ها" ||
+            (truckFilter == "Renault T" && (part.truck.contains("Renault T") || part.truck.contains("T و"))) ||
+            (truckFilter == "Renault Premium" && (part.truck.contains("Premium") || part.truck.contains("T و")))) &&
+        (search.isBlank() || part.name.contains(search, true) ||
+            part.code.contains(search, true) || part.category.contains(search, true))
     }
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
         TextButton(onClick = onBack) { Text("→ بازگشت به خانه") }
@@ -192,44 +230,64 @@ fun PartsPage(
             Text("فهرست قطعات", fontSize = 22.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
             Button(onClick = onAdd) { Text("＋ ثبت قطعه") }
         }
-        OutlinedTextField(search, onSearch, Modifier.fillMaxWidth(), label = { Text("جست‌وجوی نام یا شماره فنی") }, singleLine = true)
-        Text("دسته: $category", fontSize = 14.sp)
+        OutlinedTextField(
+            value = search, onValueChange = onSearch, modifier = Modifier.fillMaxWidth(),
+            label = { Text("جست‌وجوی نام، دسته یا شماره فنی") }, singleLine = true
+        )
+        Text("مدل کامیون", fontWeight = FontWeight.Bold)
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            listOf("همه مدل‌ها", "Renault T", "Renault Premium").forEach { option ->
+                FilterChip(
+                    selected = truckFilter == option,
+                    onClick = { truckFilter = option },
+                    label = { Text(option) }
+                )
+            }
+        }
+        Text("دسته‌بندی: $category", fontSize = 13.sp)
         Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
             TextButton(onClick = { onCategory("همه قطعات") }) { Text("همه") }
             TextButton(onClick = { onCategory("قطعات موتور") }) { Text("موتور") }
             TextButton(onClick = { onCategory("سیستم ترمز") }) { Text("ترمز") }
             TextButton(onClick = { onCategory("قطعات گیربکس") }) { Text("گیربکس") }
         }
-        LazyColumn(contentPadding = PaddingValues(bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            items(filtered) { part ->
+        Text("تعداد نتایج: ${filtered.size}", fontSize = 12.sp, color = MaterialTheme.colorScheme.secondary)
+        LazyColumn(
+            modifier = Modifier.weight(1f),
+            contentPadding = PaddingValues(bottom = 16.dp, top = 6.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            items(filtered, key = { it.code }) { part ->
                 Card(Modifier.fillMaxWidth().clickable { onPart(part) }, shape = RoundedCornerShape(14.dp)) {
                     Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                         Text(part.name, fontSize = 18.sp, fontWeight = FontWeight.Bold)
                         Text("${part.category} • ${part.truck}", fontSize = 13.sp)
+                        Text("شماره فنی / شناسه: ${part.code}", fontSize = 12.sp)
                         Text("قیمت: ${part.price}")
                         Text("موجودی: ${part.stock}")
+                        if (part.photoPath.isNotBlank()) Text("دارای عکس", fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
                         Text("مشاهده جزئیات ←", color = MaterialTheme.colorScheme.primary)
                     }
                 }
             }
-            if (filtered.isEmpty()) item { Text("موردی پیدا نشد.") }
+            if (filtered.isEmpty()) item { Text("قطعه‌ای با این مشخصات پیدا نشد. عبارت جست‌وجو یا فیلترها را تغییر بده.") }
         }
     }
 }
 
 @Composable
-fun AddPartPage(onBack: () -> Unit, onSave: (Part) -> Unit) {
+fun AddPartPage(initialPart: Part? = null, onBack: () -> Unit, onSave: (Part) -> Unit) {
     val context = LocalContext.current
-    var name by remember { mutableStateOf("") }
-    var code by remember { mutableStateOf("") }
-    var category by remember { mutableStateOf("قطعات موتور") }
-    var truck by remember { mutableStateOf("Renault T و Premium") }
-    var condition by remember { mutableStateOf("نو") }
-    var priceMode by remember { mutableStateOf("قیمت مشخص") }
-    var price by remember { mutableStateOf("") }
-    var stock by remember { mutableStateOf("1") }
-    var description by remember { mutableStateOf("") }
-    var photoPath by remember { mutableStateOf("") }
+    var name by remember(initialPart?.code) { mutableStateOf(initialPart?.name ?: "") }
+    var code by remember(initialPart?.code) { mutableStateOf(initialPart?.code ?: "") }
+    var category by remember(initialPart?.code) { mutableStateOf(initialPart?.category ?: "قطعات موتور") }
+    var truck by remember(initialPart?.code) { mutableStateOf(initialPart?.truck ?: "Renault T و Premium") }
+    var condition by remember(initialPart?.code) { mutableStateOf(initialPart?.condition ?: "نو") }
+    var priceMode by remember(initialPart?.code) { mutableStateOf(if (initialPart?.price == "استعلام قیمت") "استعلام قیمت" else "قیمت مشخص") }
+    var price by remember(initialPart?.code) { mutableStateOf(initialPart?.price?.filter { it.isDigit() } ?: "") }
+    var stock by remember(initialPart?.code) { mutableStateOf(initialPart?.stock?.filter { it.isDigit() } ?: "1") }
+    var description by remember(initialPart?.code) { mutableStateOf(initialPart?.description ?: "") }
+    var photoPath by remember(initialPart?.code) { mutableStateOf(initialPart?.photoPath ?: "") }
     var error by remember { mutableStateOf("") }
 
     val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
@@ -249,8 +307,8 @@ fun AddPartPage(onBack: () -> Unit, onSave: (Part) -> Unit) {
 
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
         TextButton(onClick = onBack) { Text("→ بازگشت به فهرست") }
-        Text("ثبت قطعه جدید", fontSize = 23.sp, fontWeight = FontWeight.Bold)
-        Text("اطلاعات قطعه را وارد کن. برای ثبت، انتخاب عکس واقعی الزامی است.", fontSize = 13.sp)
+        Text(if (initialPart == null) "ثبت قطعه جدید" else "ویرایش قطعه", fontSize = 23.sp, fontWeight = FontWeight.Bold)
+        Text("اطلاعات قطعه را وارد کن. برای ذخیره، عکس واقعی الزامی است.", fontSize = 13.sp)
         LazyColumn(
             modifier = Modifier.weight(1f),
             contentPadding = PaddingValues(bottom = 16.dp),
@@ -301,11 +359,12 @@ fun AddPartPage(onBack: () -> Unit, onSave: (Part) -> Unit) {
                         }
                     },
                     modifier = Modifier.fillMaxWidth()
-                ) { Text("ذخیره قطعه در این گوشی") }
+                ) { Text(if (initialPart == null) "ذخیره قطعه در این گوشی" else "ذخیره تغییرات") }
             }
         }
     }
 }
+
 
 @Composable
 fun CategoryDropdown(value: String, onValue: (String) -> Unit, options: List<String>) {
@@ -324,7 +383,11 @@ fun CategoryDropdown(value: String, onValue: (String) -> Unit, options: List<Str
 }
 
 @Composable
-fun PartDetailPage(part: Part, onBack: () -> Unit, onQuote: () -> Unit) {
+fun PartDetailPage(
+    part: Part, canEdit: Boolean, onBack: () -> Unit,
+    onQuote: () -> Unit, onEdit: () -> Unit, onDelete: () -> Unit
+) {
+    var showDeleteConfirm by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxSize().padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         TextButton(onClick = onBack) { Text("→ بازگشت به فهرست") }
         Text(part.name, fontSize = 24.sp, fontWeight = FontWeight.Bold)
@@ -343,8 +406,28 @@ fun PartDetailPage(part: Part, onBack: () -> Unit, onQuote: () -> Unit) {
                 Text(part.description)
             }
         }
+        if (canEdit) {
+            OutlinedButton(onClick = onEdit, modifier = Modifier.fillMaxWidth()) { Text("ویرایش این قطعه") }
+            OutlinedButton(
+                onClick = { showDeleteConfirm = true }, modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
+            ) { Text("حذف قطعه") }
+        }
         Button(onClick = onQuote, modifier = Modifier.fillMaxWidth()) { Text("درخواست استعلام / هماهنگی خرید") }
-        Text("قطعاتی که در این نسخه اضافه می‌کنی فقط روی همین گوشی ذخیره می‌شوند؛ هنوز در فروشگاه آنلاین منتشر نمی‌شوند.", fontSize = 12.sp)
+        Text("قطعات این نسخه فقط روی همین گوشی ذخیره می‌شوند؛ هنوز در فروشگاه آنلاین منتشر نمی‌شوند.", fontSize = 12.sp)
+    }
+    if (showDeleteConfirm) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirm = false },
+            title = { Text("حذف قطعه") },
+            text = { Text("آیا مطمئنی «${part.name}» حذف شود؟ این کار قابل بازگشت نیست.") },
+            confirmButton = {
+                TextButton(onClick = { showDeleteConfirm = false; onDelete() }) {
+                    Text("حذف", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = { TextButton(onClick = { showDeleteConfirm = false }) { Text("انصراف") } }
+        )
     }
 }
 
